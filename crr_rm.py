@@ -16,6 +16,62 @@ import dm_env
 from dm_env import specs as dm_specs
 import sys
 
+from rlkit.data_management.obs_dict_replay_buffer import ObsDictReplayBuffer
+
+def create_env_from_dataset(dataset_path):
+    env_meta = FileUtils.get_env_metadata_from_dataset(dataset_path)
+    env_meta['env_kwargs']['use_camera_obs'] = True
+    env_meta['env_kwargs']['render_camera'] = 'agentview'
+    print(env_meta)
+    env = EnvUtils.create_env_from_metadata(env_meta=env_meta,
+                                            render=False,
+                                            render_offscreen=True,
+                                            use_image_obs=True)
+    return env
+
+dataset_path_env = ""
+obs_keys = ["states"]
+img_size = 84
+buffer = ""
+
+eval_env = create_env_from_dataset(dataset_path_env)
+
+eval_env = ER.EnvRLkitWrapper(eval_env,
+                              obs_img_dim=img_size,  # rendered image size
+                              transpose_image=True,  # transpose for pytorch by default
+                              camera_names=['frontview', 'robot0_eye_in_hand'] #eval(variant['obs_keys']).pop()
+                              )
+
+expl_env = eval_env
+action_dim = eval_env.action_space.low.size
+
+image_modalities = ["image"]
+obs_modality_specs = {
+    "obs": {
+        "low_dim": [],  # technically unused, so we don't have to specify all of them
+        "image": image_modalities,
+    }
+}
+ObsUtils.initialize_obs_utils_with_obs_specs(obs_modality_specs)
+
+observation_keys = eval(obs_keys) # type is list
+print(observation_keys)
+
+if 'state' in observation_keys:
+    state_observation_dim = eval_env.observation_space.spaces['state'].low.size
+else:
+    state_observation_dim = 0
+
+with open(buffer, 'rb') as fl:
+    data = np.load(fl, allow_pickle=True)
+num_transitions = get_buffer_size(data)
+max_replay_buffer_size = num_transitions + 10
+replay_buffer = ObsDictReplayBuffer(
+    max_replay_buffer_size,
+    expl_env,
+    observation_keys=observation_keys
+)
+
 obs_dim = 19
 action_dim = 7
 environment_spec = specs.EnvironmentSpec(
@@ -93,18 +149,7 @@ action_spec = environment_spec.actions
 action_size = np.prod(action_spec.shape, dtype=int)
 
 with accelerator_strategy.scope():
-  dataset = dm_control_suite.dataset(
-    'gs://rl_unplugged/',
-    data_path=task.data_path,
-    shapes=task.shapes,
-    uint8_features=task.uint8_features,
-    num_threads=1,
-    batch_size=batch_size,
-    num_shards=num_shards,
-    sarsa=False)
-  # CRR learner assumes that the dataset samples don't have metadata,
-  # so let's remove it here.
-  dataset = dataset.map(lambda sample: sample.data)
+
   nets = make_networks(action_spec)
   policy_network, critic_network = nets['policy'], nets['critic']
 
@@ -135,7 +180,7 @@ learner = crr.RCRRLearner(
     accelerator_strategy=accelerator_strategy,
     target_policy_network=target_policy_network,
     target_critic_network=target_critic_network,
-    dataset=dataset,
+    dataset=replay_buffer,
     discount=0.99,
     logger=logger,
     checkpoint=True,
