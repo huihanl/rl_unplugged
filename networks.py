@@ -68,6 +68,8 @@ class ControlNetwork(snt.Module):
     Returns:
       Processed network output.
     """
+    print("inputs: ", inputs)
+    print("isinstance(inputs, dict): ", isinstance(inputs, dict))
     if not isinstance(inputs, dict):
       inputs = {'inputs': inputs}
 
@@ -75,6 +77,7 @@ class ControlNetwork(snt.Module):
     # By default, treat all observations as proprioceptive.
     if self._proprio_keys is None:
       self._proprio_keys = list(sorted(inputs.keys()))
+    print("self._proprio_keys: ", self._proprio_keys)
     for key in self._proprio_keys:
       proprio_input.append(snt.Flatten()(inputs[key]))
       if np.prod(inputs[key].shape[1:]) > 32*32*3:
